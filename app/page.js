@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-const HISTORY_KEY = "meme_scanner_history_v2";
-const WATCHLIST_KEY = "meme_scanner_watchlist_v2";
+const HISTORY_KEY =
+  "meme_scanner_history_v3";
+
+const WATCHLIST_KEY =
+  "meme_scanner_watchlist_v3";
+
 function money(value) {
   const n = Number(value || 0);
 
@@ -13,9 +21,15 @@ function money(value) {
     return "$" + n.toPrecision(3);
   }
 
-  return "$" + n.toLocaleString(undefined, {
-    maximumFractionDigits: 0,
-  });
+  return (
+    "$" +
+    n.toLocaleString(
+      undefined,
+      {
+        maximumFractionDigits: 0,
+      }
+    )
+  );
 }
 
 function percent(value) {
@@ -31,53 +45,74 @@ function percent(value) {
 function scoreColor(score) {
   if (score >= 80) return "#4ade80";
   if (score >= 65) return "#facc15";
+
   return "#94a3b8";
 }
 
 function riskColor(score) {
   if (score >= 60) return "#f87171";
   if (score >= 30) return "#facc15";
+
   return "#4ade80";
 }
 
 function loadStorage(key, fallback) {
   try {
-    const data = localStorage.getItem(key);
+    const value =
+      localStorage.getItem(key);
 
-    if (!data) return fallback;
+    if (!value) return fallback;
 
-    return JSON.parse(data);
+    return JSON.parse(value);
   } catch {
     return fallback;
   }
 }
 
 export default function Home() {
-  const [coins, setCoins] = useState([]);
-const [scanMode, setScanMode] = useState("early");
-  const [chain, setChain] = useState("solana");
+  const [coins, setCoins] =
+    useState([]);
 
-  const [status, setStatus] = useState("Starting scanner...");
+  const [chain, setChain] =
+    useState("solana");
 
-  const [loading, setLoading] = useState(false);
+  const [scanMode, setScanMode] =
+    useState("early");
 
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [status, setStatus] =
+    useState("Starting scanner...");
 
-  const [minMomentum, setMinMomentum] = useState(0);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [minLiquidity, setMinLiquidity] = useState(0);
+  const [autoRefresh, setAutoRefresh] =
+    useState(true);
 
-  const [watchlist, setWatchlist] = useState([]);
+  const [minMomentum, setMinMomentum] =
+    useState(0);
 
-  const [history, setHistory] = useState([]);
+  const [minLiquidity, setMinLiquidity] =
+    useState(0);
+
+  const [watchlist, setWatchlist] =
+    useState([]);
+
+  const [history, setHistory] =
+    useState([]);
 
   useEffect(() => {
     setWatchlist(
-      loadStorage(WATCHLIST_KEY, [])
+      loadStorage(
+        WATCHLIST_KEY,
+        []
+      )
     );
 
     setHistory(
-      loadStorage(HISTORY_KEY, [])
+      loadStorage(
+        HISTORY_KEY,
+        []
+      )
     );
   }, []);
 
@@ -86,25 +121,33 @@ const [scanMode, setScanMode] = useState("early");
 
     setLoading(true);
 
-    setStatus("Scanning live markets...");
+    setStatus(
+      scanMode === "early"
+        ? "Looking for early activity..."
+        : "Scanning momentum..."
+    );
 
     try {
-      const response = await fetch(
-        `/api/scan?chain=${chain}&mode=${scanMode}`
-        {
-          cache: "no-store",
-        }
-      );
+      const response =
+        await fetch(
+          `/api/scan?chain=${chain}&mode=${scanMode}`,
+          {
+            cache: "no-store",
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data.error || "Scanner error"
+          data.error ||
+            "Scanner error"
         );
       }
 
-      const tokens = data.tokens || [];
+      const tokens =
+        data.tokens || [];
 
       setCoins(tokens);
 
@@ -116,18 +159,38 @@ const [scanMode, setScanMode] = useState("early");
       );
     } catch (error) {
       setStatus(
-        "Error: " + error.message
+        "Error: " +
+          error.message
       );
     } finally {
       setLoading(false);
     }
   }
 
+  async function copyContract(address) {
+    try {
+      await navigator.clipboard.writeText(
+        address
+      );
+
+      setStatus(
+        "Contract copied ✓"
+      );
+    } catch {
+      setStatus(
+        "Could not copy contract"
+      );
+    }
+  }
+
   function updateHistory(tokens) {
     const now = Date.now();
 
-    let currentHistory =
-      loadStorage(HISTORY_KEY, []);
+    let current =
+      loadStorage(
+        HISTORY_KEY,
+        []
+      );
 
     for (const coin of tokens) {
       if (
@@ -137,18 +200,20 @@ const [scanMode, setScanMode] = useState("early");
         continue;
       }
 
-      const recent =
-        currentHistory.find(
+      const existing =
+        current.find(
           (item) =>
-            item.chain === coin.chain &&
+            item.chain ===
+              coin.chain &&
             item.tokenAddress ===
               coin.tokenAddress &&
-            now - item.createdAt <
+            now -
+              item.createdAt <
               30 * 60 * 1000
         );
 
-      if (!recent) {
-        currentHistory.unshift({
+      if (!existing) {
+        current.unshift({
           id:
             coin.chain +
             ":" +
@@ -156,90 +221,42 @@ const [scanMode, setScanMode] = useState("early");
             ":" +
             now,
 
-          chain: coin.chain,
+          chain:
+            coin.chain,
 
           tokenAddress:
             coin.tokenAddress,
 
-          symbol: coin.symbol,
+          symbol:
+            coin.symbol,
 
-          name: coin.name,
+          name:
+            coin.name,
 
-          url: coin.url,
+          url:
+            coin.url,
 
           momentum:
             coin.momentum,
 
-          risk: coin.risk,
+          risk:
+            coin.risk,
+
+          scanMode,
 
           alertPrice:
             coin.priceUsd,
 
-          createdAt: now,
+          createdAt:
+            now,
 
           outcomes: {},
         });
       }
     }
 
-    const targets = [
-      5,
-      15,
-      30,
-      60,
-    ];
-
-    currentHistory =
-      currentHistory.map(
-        (item) => {
-          const currentCoin =
-            tokens.find(
-              (coin) =>
-                coin.chain ===
-                  item.chain &&
-                coin.tokenAddress ===
-                  item.tokenAddress
-            );
-
-          if (
-            !currentCoin ||
-            !currentCoin.priceUsd
-          ) {
-            return item;
-          }
-
-          const ageMinutes =
-            (now -
-              item.createdAt) /
-            60000;
-
-          const outcomes = {
-            ...(item.outcomes || {}),
-          };
-
-          for (const target of targets) {
-            if (
-              ageMinutes >= target &&
-              outcomes[target] ===
-                undefined
-            ) {
-              outcomes[target] =
-                (currentCoin.priceUsd /
-                  item.alertPrice -
-                  1) *
-                100;
-            }
-          }
-
-          return {
-            ...item,
-            outcomes,
-          };
-        }
-      );
-
-    currentHistory =
-      currentHistory.slice(
+    current =
+      current.slice(
         0,
         100
       );
@@ -247,67 +264,70 @@ const [scanMode, setScanMode] = useState("early");
     localStorage.setItem(
       HISTORY_KEY,
       JSON.stringify(
-        currentHistory
+        current
       )
     );
 
-    setHistory(currentHistory);
+    setHistory(current);
   }
-async function copyContract(address) {
-  try {
-    await navigator.clipboard.writeText(address);
-    setStatus("Contract address copied ✓");
-  } catch {
-    setStatus("Could not copy contract address");
-  }
-}
-  function toggleWatch(coin) {
-    let updated;
 
+  function toggleWatch(coin) {
     const exists =
       watchlist.some(
         (item) =>
           item.tokenAddress ===
             coin.tokenAddress &&
-          item.chain === coin.chain
+          item.chain ===
+            coin.chain
       );
 
-    if (exists) {
-      updated =
-        watchlist.filter(
-          (item) =>
-            !(
-              item.tokenAddress ===
-                coin.tokenAddress &&
-              item.chain ===
-                coin.chain
-            )
-        );
-    } else {
-      updated = [
-        ...watchlist,
-        {
-          chain: coin.chain,
-          tokenAddress:
-            coin.tokenAddress,
-          symbol: coin.symbol,
-          name: coin.name,
-          url: coin.url,
-        },
-      ];
-    }
+    const updated =
+      exists
+        ? watchlist.filter(
+            (item) =>
+              !(
+                item.tokenAddress ===
+                  coin.tokenAddress &&
+                item.chain ===
+                  coin.chain
+              )
+          )
+        : [
+            ...watchlist,
+            {
+              chain:
+                coin.chain,
+
+              tokenAddress:
+                coin.tokenAddress,
+
+              symbol:
+                coin.symbol,
+
+              name:
+                coin.name,
+
+              url:
+                coin.url,
+            },
+          ];
 
     setWatchlist(updated);
 
     localStorage.setItem(
       WATCHLIST_KEY,
-      JSON.stringify(updated)
+      JSON.stringify(
+        updated
+      )
     );
   }
 
   useEffect(() => {
     scan();
-  }, [chain, scanMode]);
+  }, [
+    chain,
+    scanMode,
+  ]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -315,7 +335,7 @@ async function copyContract(address) {
     const timer =
       setInterval(
         scan,
-        30000
+        20000
       );
 
     return () =>
@@ -323,6 +343,7 @@ async function copyContract(address) {
   }, [
     autoRefresh,
     chain,
+    scanMode,
     loading,
   ]);
 
@@ -348,13 +369,16 @@ async function copyContract(address) {
     <main
       style={{
         minHeight: "100vh",
+
         background:
           "linear-gradient(180deg,#070a10,#0b1019)",
+
         color: "white",
+
         fontFamily:
           "Arial, sans-serif",
-        padding:
-          "18px",
+
+        padding: "18px",
       }}
     >
       <div
@@ -363,30 +387,23 @@ async function copyContract(address) {
           margin: "0 auto",
         }}
       >
-        <h1
-          style={{
-            fontSize: "26px",
-            marginBottom: "4px",
-          }}
-        >
-          ⚡ Meme Coin Momentum Scanner
+        <h1>
+          ⚡ Meme Coin Scanner
         </h1>
 
         <p
           style={{
             color: "#94a3b8",
-            marginTop: 0,
           }}
         >
-          Live market activity scanner
+          Early activity + momentum scanner
         </p>
 
         <div
           style={{
             display: "flex",
-            gap: "8px",
             flexWrap: "wrap",
-            marginBottom: "16px",
+            gap: "8px",
           }}
         >
           <select
@@ -399,11 +416,8 @@ async function copyContract(address) {
             style={{
               padding: "10px",
               borderRadius: "10px",
-              background:
-                "#111827",
+              background: "#111827",
               color: "white",
-              border:
-                "1px solid #334155",
             }}
           >
             <option value="solana">
@@ -414,31 +428,43 @@ async function copyContract(address) {
               Base
             </option>
           </select>
-<select
-  value={scanMode}
-  onChange={(e) => setScanMode(e.target.value)}
-  style={{
-    padding: "10px",
-    borderRadius: "10px",
-    background: "#111827",
-    color: "white",
-    border: "1px solid #334155",
-  }}
->
-  <option value="early">⚡ Early Mode</option>
-  <option value="momentum">🔥 Momentum Mode</option>
-</select>
+
+          <select
+            value={scanMode}
+            onChange={(e) =>
+              setScanMode(
+                e.target.value
+              )
+            }
+            style={{
+              padding: "10px",
+              borderRadius: "10px",
+              background: "#111827",
+              color: "white",
+            }}
+          >
+            <option value="early">
+              ⚡ Early Mode
+            </option>
+
+            <option value="momentum">
+              🔥 Momentum Mode
+            </option>
+          </select>
+
           <button
             onClick={scan}
             style={{
               padding:
                 "10px 14px",
-              borderRadius: "10px",
+              borderRadius:
+                "10px",
               background:
                 "#2563eb",
               color: "white",
               border: "none",
-              fontWeight: "bold",
+              fontWeight:
+                "bold",
             }}
           >
             {loading
@@ -455,7 +481,8 @@ async function copyContract(address) {
             style={{
               padding:
                 "10px 14px",
-              borderRadius: "10px",
+              borderRadius:
+                "10px",
               background:
                 autoRefresh
                   ? "#14532d"
@@ -464,164 +491,85 @@ async function copyContract(address) {
               border: "none",
             }}
           >
-            Auto:{" "}
+            Auto{" "}
             {autoRefresh
               ? "ON"
               : "OFF"}
           </button>
         </div>
 
+        <p>{status}</p>
+
         <div
           style={{
-            background:
-              "#111827",
-            border:
-              "1px solid #1f2937",
-            borderRadius:
-              "14px",
-            padding:
-              "14px",
-            marginBottom:
-              "14px",
+            display: "grid",
+            gridTemplateColumns:
+              "1fr 1fr",
+            gap: "8px",
+            marginBottom: "16px",
           }}
         >
-          <strong>
-            {status}
-          </strong>
-
-          <div
-            style={{
-              display:
-                "grid",
-              gridTemplateColumns:
-                "1fr 1fr",
-              gap: "10px",
-              marginTop:
-                "12px",
-            }}
+          <select
+            value={minMomentum}
+            onChange={(e) =>
+              setMinMomentum(
+                Number(
+                  e.target.value
+                )
+              )
+            }
           >
-            <div>
-              <div
-                style={{
-                  color:
-                    "#94a3b8",
-                  fontSize:
-                    "12px",
-                }}
-              >
-                Min Momentum
-              </div>
+            <option value="0">
+              All scores
+            </option>
 
-              <select
-                value={
-                  minMomentum
-                }
-                onChange={(e) =>
-                  setMinMomentum(
-                    Number(
-                      e.target
-                        .value
-                    )
-                  )
-                }
-                style={{
-                  width:
-                    "100%",
-                  marginTop:
-                    "4px",
-                  padding:
-                    "9px",
-                  borderRadius:
-                    "8px",
-                  background:
-                    "#0f172a",
-                  color:
-                    "white",
-                }}
-              >
-                <option value="0">
-                  All
-                </option>
+            <option value="50">
+              50+
+            </option>
 
-                <option value="50">
-                  50+
-                </option>
+            <option value="65">
+              65+
+            </option>
 
-                <option value="65">
-                  65+
-                </option>
+            <option value="70">
+              70+
+            </option>
 
-                <option value="70">
-                  70+
-                </option>
+            <option value="80">
+              80+
+            </option>
+          </select>
 
-                <option value="80">
-                  80+
-                </option>
-              </select>
-            </div>
+          <select
+            value={minLiquidity}
+            onChange={(e) =>
+              setMinLiquidity(
+                Number(
+                  e.target.value
+                )
+              )
+            }
+          >
+            <option value="0">
+              Any liquidity
+            </option>
 
-            <div>
-              <div
-                style={{
-                  color:
-                    "#94a3b8",
-                  fontSize:
-                    "12px",
-                }}
-              >
-                Min Liquidity
-              </div>
+            <option value="10000">
+              $10k+
+            </option>
 
-              <select
-                value={
-                  minLiquidity
-                }
-                onChange={(e) =>
-                  setMinLiquidity(
-                    Number(
-                      e.target
-                        .value
-                    )
-                  )
-                }
-                style={{
-                  width:
-                    "100%",
-                  marginTop:
-                    "4px",
-                  padding:
-                    "9px",
-                  borderRadius:
-                    "8px",
-                  background:
-                    "#0f172a",
-                  color:
-                    "white",
-                }}
-              >
-                <option value="0">
-                  Any
-                </option>
+            <option value="25000">
+              $25k+
+            </option>
 
-                <option value="10000">
-                  $10k+
-                </option>
+            <option value="50000">
+              $50k+
+            </option>
 
-                <option value="25000">
-                  $25k+
-                </option>
-
-                <option value="50000">
-                  $50k+
-                </option>
-
-                <option value="100000">
-                  $100k+
-                </option>
-              </select>
-            </div>
-          </div>
+            <option value="100000">
+              $100k+
+            </option>
+          </select>
         </div>
 
         {strongest && (
@@ -629,34 +577,29 @@ async function copyContract(address) {
             style={{
               background:
                 "#111827",
-              border:
-                "1px solid #334155",
+              padding:
+                "15px",
               borderRadius:
                 "14px",
-              padding:
-                "16px",
               marginBottom:
                 "14px",
             }}
           >
-            <div
-              style={{
-                color:
-                  "#94a3b8",
-                fontSize:
-                  "12px",
-              }}
-            >
-              STRONGEST CURRENT SIGNAL
-            </div>
+            <small>
+              {scanMode ===
+              "early"
+                ? "EARLIEST CURRENT SIGNAL"
+                : "STRONGEST MOMENTUM"}
+            </small>
 
             <h2>
-              {strongest.name} (
-              {strongest.symbol})
+              {
+                strongest.symbol
+              }
             </h2>
 
             <div>
-              Momentum:{" "}
+              Score:{" "}
               <strong
                 style={{
                   color:
@@ -682,24 +625,18 @@ async function copyContract(address) {
                     ),
                 }}
               >
-                {strongest.risk}
+                {
+                  strongest.risk
+                }
                 /100
               </strong>
-            </div>
-
-            <div>
-              5m:{" "}
-              {percent(
-                strongest.priceChange5m
-              )}
             </div>
           </div>
         )}
 
         <div
           style={{
-            display:
-              "grid",
+            display: "grid",
             gap: "12px",
           }}
         >
@@ -713,6 +650,12 @@ async function copyContract(address) {
                     item.chain ===
                       coin.chain
                 );
+
+              const fomoUrl =
+                coin.chain ===
+                "solana"
+                  ? `https://fomo.family/coin?address=${coin.tokenAddress}&chainId=1399811149`
+                  : coin.url;
 
               return (
                 <div
@@ -736,31 +679,18 @@ async function copyContract(address) {
                         "flex",
                       justifyContent:
                         "space-between",
-                      gap: "10px",
                     }}
                   >
                     <div>
-                      <h2
-                        style={{
-                          margin:
-                            "0 0 4px",
-                        }}
-                      >
+                      <h2>
                         {
                           coin.symbol
                         }
                       </h2>
 
-                      <div
-                        style={{
-                          color:
-                            "#94a3b8",
-                          fontSize:
-                            "12px",
-                        }}
-                      >
+                      <small>
                         {coin.name}
-                      </div>
+                      </small>
                     </div>
 
                     <button
@@ -769,147 +699,125 @@ async function copyContract(address) {
                           coin
                         )
                       }
-                      style={{
-                        border:
-                          "none",
-                        borderRadius:
-                          "8px",
-                        padding:
-                          "8px 10px",
-                        background:
-                          watching
-                            ? "#7c3aed"
-                            : "#1e293b",
-                        color:
-                          "white",
-                      }}
                     >
                       {watching
-                        ? "★ Watching"
-                        : "☆ Watch"}
+                        ? "★"
+                        : "☆"}
                     </button>
                   </div>
 
-                  <div
+                  {coin.ageMinutes !==
+                    null && (
+                    <p>
+                      Age:{" "}
+                      {coin.ageMinutes <
+                      60
+                        ? `${coin.ageMinutes.toFixed(
+                            1
+                          )} min`
+                        : `${(
+                            coin.ageMinutes /
+                            60
+                          ).toFixed(
+                            1
+                          )} hr`}
+                    </p>
+                  )}
+
+                  <p>
+                    Score:{" "}
+                    <strong
+                      style={{
+                        color:
+                          scoreColor(
+                            coin.momentum
+                          ),
+                      }}
+                    >
+                      {
+                        coin.momentum
+                      }
+                      /100
+                    </strong>
+                  </p>
+
+                  <p>
+                    Risk:{" "}
+                    <strong
+                      style={{
+                        color:
+                          riskColor(
+                            coin.risk
+                          ),
+                      }}
+                    >
+                      {coin.risk}/100
+                    </strong>
+                  </p>
+
+                  <p>
+                    5m Price:{" "}
+                    {percent(
+                      coin.priceChange5m
+                    )}
+                  </p>
+
+                  <p>
+                    5m Volume:{" "}
+                    {money(
+                      coin.volume5m
+                    )}
+                  </p>
+
+                  <p>
+                    Liquidity:{" "}
+                    {money(
+                      coin.liquidity
+                    )}
+                  </p>
+
+                  <p>
+                    Buys/Sells:{" "}
+                    {coin.buys} /{" "}
+                    {coin.sells}
+                  </p>
+
+                  {coin.signals?.length >
+                    0 && (
+                    <p
+                      style={{
+                        color:
+                          "#facc15",
+                      }}
+                    >
+                      ⚡{" "}
+                      {coin.signals.join(
+                        " • "
+                      )}
+                    </p>
+                  )}
+
+                  <button
+                    onClick={() =>
+                      copyContract(
+                        coin.tokenAddress
+                      )
+                    }
                     style={{
-                      display:
-                        "grid",
-                      gridTemplateColumns:
-                        "1fr 1fr",
-                      gap: "8px",
-                      marginTop:
-                        "12px",
+                      marginRight:
+                        "10px",
+                      padding:
+                        "9px",
                     }}
                   >
-                    <div>
-                      Momentum
-                      <br />
+                    📋 Copy Contract
+                  </button>
 
-                      <strong
-                        style={{
-                          color:
-                            scoreColor(
-                              coin.momentum
-                            ),
-                        }}
-                      >
-                        {
-                          coin.momentum
-                        }
-                        /100
-                      </strong>
-                    </div>
-
-                    <div>
-                      Risk
-                      <br />
-
-                      <strong
-                        style={{
-                          color:
-                            riskColor(
-                              coin.risk
-                            ),
-                        }}
-                      >
-                        {
-                          coin.risk
-                        }
-                        /100
-                      </strong>
-                    </div>
-
-                    <div>
-                      5m Price
-                      <br />
-
-                      <strong>
-                        {percent(
-                          coin.priceChange5m
-                        )}
-                      </strong>
-                    </div>
-
-                    <div>
-                      Liquidity
-                      <br />
-
-                      <strong>
-                        {money(
-                          coin.liquidity
-                        )}
-                      </strong>
-                    </div>
-
-                    <div>
-                      5m Volume
-                      <br />
-
-                      <strong>
-                        {money(
-                          coin.volume5m
-                        )}
-                      </strong>
-                    </div>
-
-                    <div>
-                      Buys / Sells
-                      <br />
-
-                      <strong>
-                        {coin.buys} /{" "}
-                        {coin.sells}
-                      </strong>
-                    </div>
-                  </div>
-<button
-  onClick={() => copyContract(coin.tokenAddress)}
-  style={{
-    marginTop: "12px",
-    marginRight: "12px",
-    padding: "9px 12px",
-    border: "none",
-    borderRadius: "8px",
-    background: "#334155",
-    color: "white",
-    fontWeight: "bold",
-  }}
->
-  📋 Copy Contract
-</button>
                   <a
-                    href={
-  coin.chain === "solana"
-    ? `https://fomo.family/coin?address=${coin.tokenAddress}&chainId=1399811149`
-    : coin.url
-}
+                    href={fomoUrl}
                     target="_blank"
                     rel="noreferrer"
                     style={{
-                      display:
-                        "inline-block",
-                      marginTop:
-                        "12px",
                       color:
                         "#60a5fa",
                     }}
@@ -925,7 +833,7 @@ async function copyContract(address) {
         <div
           style={{
             marginTop:
-              "24px",
+              "25px",
             background:
               "#111827",
             padding:
@@ -938,21 +846,8 @@ async function copyContract(address) {
             Signal History
           </h2>
 
-          {history.length ===
-            0 && (
-            <p
-              style={{
-                color:
-                  "#94a3b8",
-              }}
-            >
-              Signals scoring 70+
-              will appear here.
-            </p>
-          )}
-
           {history
-            .slice(0, 20)
+            .slice(0, 15)
             .map(
               (item) => (
                 <div
@@ -963,7 +858,7 @@ async function copyContract(address) {
                     borderTop:
                       "1px solid #243244",
                     padding:
-                      "10px 0",
+                      "8px 0",
                   }}
                 >
                   <strong>
@@ -972,86 +867,14 @@ async function copyContract(address) {
                     }
                   </strong>
 
-                  <div
-                    style={{
-                      fontSize:
-                        "12px",
-                      color:
-                        "#94a3b8",
-                    }}
-                  >
-                    Momentum{" "}
-                    {
-                      item.momentum
-                    }{" "}
-                    • Risk{" "}
-                    {item.risk}
-                  </div>
+                  {" — "}
 
-                  <div
-                    style={{
-                      marginTop:
-                        "4px",
-                      fontSize:
-                        "13px",
-                    }}
-                  >
-                    +5m{" "}
-                    {item
-                      .outcomes?.[
-                      5
-                    ] ===
-                    undefined
-                      ? "—"
-                      : percent(
-                          item
-                            .outcomes[
-                            5
-                          ]
-                        )}
-                    {" | "}
-                    +15m{" "}
-                    {item
-                      .outcomes?.[
-                      15
-                    ] ===
-                    undefined
-                      ? "—"
-                      : percent(
-                          item
-                            .outcomes[
-                            15
-                          ]
-                        )}
-                    {" | "}
-                    +30m{" "}
-                    {item
-                      .outcomes?.[
-                      30
-                    ] ===
-                    undefined
-                      ? "—"
-                      : percent(
-                          item
-                            .outcomes[
-                            30
-                          ]
-                        )}
-                    {" | "}
-                    +60m{" "}
-                    {item
-                      .outcomes?.[
-                      60
-                    ] ===
-                    undefined
-                      ? "—"
-                      : percent(
-                          item
-                            .outcomes[
-                            60
-                          ]
-                        )}
-                  </div>
+                  {item.momentum}
+                  /100
+
+                  {" • "}
+
+                  {item.scanMode}
                 </div>
               )
             )}
@@ -1059,21 +882,17 @@ async function copyContract(address) {
 
         <p
           style={{
-            marginTop:
-              "25px",
             color:
               "#64748b",
             fontSize:
               "12px",
-            lineHeight:
-              "1.5",
+            marginTop:
+              "25px",
           }}
         >
-          Momentum and risk
-          scores are informational
-          indicators only and do
-          not guarantee future
-          price movement.
+          These scores detect market
+          activity. They do not predict or
+          guarantee that a token will rise.
         </p>
       </div>
     </main>
