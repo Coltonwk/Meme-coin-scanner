@@ -254,7 +254,14 @@ export default function Home() {
 
     setHistory(currentHistory);
   }
-
+async function copyContract(address) {
+  try {
+    await navigator.clipboard.writeText(address);
+    setStatus("Contract address copied ✓");
+  } catch {
+    setStatus("Could not copy contract address");
+  }
+}
   function toggleWatch(coin) {
     let updated;
 
@@ -863,7 +870,21 @@ export default function Home() {
                       </strong>
                     </div>
                   </div>
-
+<button
+  onClick={() => copyContract(coin.tokenAddress)}
+  style={{
+    marginTop: "12px",
+    marginRight: "12px",
+    padding: "9px 12px",
+    border: "none",
+    borderRadius: "8px",
+    background: "#334155",
+    color: "white",
+    fontWeight: "bold",
+  }}
+>
+  📋 Copy Contract
+</button>
                   <a
                     href={
   coin.chain === "solana"
