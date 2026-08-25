@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 
 const HISTORY_KEY = "meme_scanner_history_v2";
 const WATCHLIST_KEY = "meme_scanner_watchlist_v2";
-
 function money(value) {
   const n = Number(value || 0);
 
