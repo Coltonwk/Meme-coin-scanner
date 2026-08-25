@@ -865,7 +865,11 @@ export default function Home() {
                   </div>
 
                   <a
-                    href={coin.url}
+                    href={
+  coin.chain === "solana"
+    ? `https://fomo.family/coin?address=${coin.tokenAddress}&chainId=1399811149`
+    : coin.url
+}
                     target="_blank"
                     rel="noreferrer"
                     style={{
@@ -877,7 +881,7 @@ export default function Home() {
                         "#60a5fa",
                     }}
                   >
-                    View Token →
+                    Open in Fomo →
                   </a>
                 </div>
               );
