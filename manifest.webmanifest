@@ -1,0 +1,9 @@
+{
+  "name": "Meme Coin Momentum Scanner",
+  "short_name": "Coin Scanner",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090b10",
+  "theme_color": "#090b10",
+  "description": "Informational momentum and risk scanner."
+}
