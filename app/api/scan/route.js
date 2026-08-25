@@ -1,171 +1,230 @@
 import { NextResponse } from "next/server";
 
-const BASE = "https://api.dexscreener.com";
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-function num(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+const DEX = "https://api.dexscreener.com";
+const BIRDEYE = "https://public-api.birdeye.so";
+
+const n = (v, d = 0) => Number.isFinite(Number(v)) ? Number(v) : d;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+async function dexGet(path) {
+  const r = await fetch(DEX + path, { cache: "no-store" });
+  if (!r.ok) throw new Error(`DEX request failed (${r.status})`);
+  return r.json();
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+async function birdeyeFresh(chain) {
+  const key = process.env.BIRDEYE_API_KEY;
+  if (!key) return [];
 
-async function get(path) {
-  const response = await fetch(BASE + path, {
-    cache: "no-store",
-  });
+  const params = new URLSearchParams({ limit: "20" });
+  if (chain === "solana") params.set("meme_platform_enabled", "true");
 
-  if (!response.ok) {
-    throw new Error("Market data request failed");
-  }
-
-  return response.json();
-}
-
-function scorePair(pair) {
-  const liquidity = num(pair?.liquidity?.usd);
-  const volume5m = num(pair?.volume?.m5);
-  const volume1h = num(pair?.volume?.h1);
-  const price5m = num(pair?.priceChange?.m5);
-
-  const buys = num(pair?.txns?.m5?.buys);
-  const sells = num(pair?.txns?.m5?.sells);
-  const totalTrades = buys + sells;
-
-  let score = 0;
-
-  if (price5m > 0) {
-    score += clamp((price5m / 20) * 25, 0, 25);
-  }
-
-  const normal5mVolume = Math.max(volume1h / 12, 1);
-  const volumeAcceleration = volume5m / normal5mVolume;
-
-  score += clamp(
-    ((volumeAcceleration - 1) / 4) * 25,
-    0,
-    25
+  const r = await fetch(
+    `${BIRDEYE}/defi/v2/tokens/new_listing?${params}`,
+    {
+      cache: "no-store",
+      headers: {
+        "X-API-KEY": key,
+        "x-chain": chain,
+      },
+    }
   );
 
-  if (totalTrades >= 5) {
-    const buySellRatio = (buys + 1) / (sells + 1);
+  if (!r.ok) return [];
 
-    score += clamp(
-      ((buySellRatio - 1) / 2) * 20,
-      0,
-      20
-    );
+  const j = await r.json();
+  const items =
+    [j?.data?.items, j?.data?.tokens, j?.data?.list, j?.data]
+      .find(Array.isArray) || [];
+
+  return items.map(x => ({
+    address: x?.address || x?.tokenAddress || x?.token_address || x?.mint || "",
+    source: "Birdeye new listing",
+  })).filter(x => x.address);
+}
+
+async function dexFallback(chain) {
+  const [profiles, boosts] = await Promise.all([
+    dexGet("/token-profiles/latest/v1").catch(() => []),
+    dexGet("/token-boosts/latest/v1").catch(() => []),
+  ]);
+
+  const seen = new Set();
+  const out = [];
+
+  for (const x of [...profiles, ...boosts]) {
+    if ((x?.chainId || "").toLowerCase() !== chain) continue;
+    if (!x?.tokenAddress || seen.has(x.tokenAddress)) continue;
+    seen.add(x.tokenAddress);
+    out.push({ address: x.tokenAddress, source: "DEX fallback" });
+    if (out.length >= 20) break;
   }
+  return out;
+}
 
-  if (liquidity >= 250000) score += 15;
-  else if (liquidity >= 100000) score += 11;
-  else if (liquidity >= 50000) score += 7;
-  else if (liquidity >= 20000) score += 3;
+async function discover(chain) {
+  const [fresh, fallback] = await Promise.all([
+    birdeyeFresh(chain),
+    dexFallback(chain),
+  ]);
 
-  score += clamp((totalTrades / 80) * 15, 0, 15);
+  const seen = new Set();
+  const out = [];
+
+  for (const x of [...fresh, ...fallback]) {
+    if (!x.address || seen.has(x.address)) continue;
+    seen.add(x.address);
+    out.push(x);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+function ageMinutes(pair) {
+  if (!pair?.pairCreatedAt) return null;
+  const age = (Date.now() - Number(pair.pairCreatedAt)) / 60000;
+  return Number.isFinite(age) && age >= 0 ? age : null;
+}
+
+async function bestPair(chain, address) {
+  const pairs = await dexGet(`/token-pairs/v1/${chain}/${address}`);
+  if (!Array.isArray(pairs) || !pairs.length) return null;
+  return [...pairs].sort(
+    (a,b) => n(b?.liquidity?.usd) - n(a?.liquidity?.usd)
+  )[0];
+}
+
+function score(pair) {
+  const age = ageMinutes(pair);
+  const liq = n(pair?.liquidity?.usd);
+  const fdv = n(pair?.fdv);
+  const vol5 = n(pair?.volume?.m5);
+  const vol1h = n(pair?.volume?.h1);
+  const p5 = n(pair?.priceChange?.m5);
+
+  const b5 = n(pair?.txns?.m5?.buys);
+  const s5 = n(pair?.txns?.m5?.sells);
+  const t5 = b5 + s5;
+
+  const b1h = n(pair?.txns?.h1?.buys);
+  const s1h = n(pair?.txns?.h1?.sells);
+  const t1h = b1h + s1h;
 
   let risk = 0;
+  const riskFlags = [];
 
-  if (liquidity < 10000) risk += 35;
-  else if (liquidity < 25000) risk += 20;
+  if (liq < 10000) { risk += 35; riskFlags.push("very low liquidity"); }
+  else if (liq < 25000) { risk += 20; riskFlags.push("low liquidity"); }
 
-  if (totalTrades < 5) risk += 15;
-
-  if (Math.abs(price5m) >= 50) {
-    risk += 20;
+  if (liq > 0 && fdv > 0) {
+    const m = fdv / liq;
+    if (m >= 100) { risk += 25; riskFlags.push("very high FDV/liquidity"); }
+    else if (m >= 40) { risk += 12; riskFlags.push("high FDV/liquidity"); }
   }
 
-  const momentum = Math.round(
-    clamp(score - risk * 0.18, 0, 100)
-  );
+  if (t5 < 5) { risk += 15; riskFlags.push("little 5m activity"); }
+  if (Math.abs(p5) >= 50) { risk += 20; riskFlags.push("extreme 5m move"); }
+
+  let early = 0;
+  const signals = [];
+
+  if (age !== null) {
+    if (age <= 2) { early += 30; signals.push("â¤2m old"); }
+    else if (age <= 5) { early += 27; signals.push("â¤5m old"); }
+    else if (age <= 10) { early += 22; signals.push("â¤10m old"); }
+    else if (age <= 20) early += 15;
+    else if (age <= 45) early += 7;
+  }
+
+  const ratio = (b5 + 1) / (s5 + 1);
+  if (t5 >= 4) {
+    early += clamp(((ratio - 1) / 2) * 22, 0, 22);
+    if (ratio >= 1.5) signals.push(`buy/sell ${ratio.toFixed(2)}`);
+  }
+
+  const txAccel = t5 / Math.max(t1h / 12, 1);
+  early += clamp(((txAccel - 1) / 4) * 18, 0, 18);
+  if (txAccel >= 1.5) signals.push(`tx ${txAccel.toFixed(1)}x pace`);
+
+  const volAccel = vol5 / Math.max(vol1h / 12, 1);
+  early += clamp(((volAccel - 1) / 4) * 18, 0, 18);
+  if (volAccel >= 1.5) signals.push(`vol ${volAccel.toFixed(1)}x pace`);
+
+  if (liq >= 100000) early += 12;
+  else if (liq >= 50000) early += 10;
+  else if (liq >= 25000) early += 7;
+  else if (liq >= 10000) early += 3;
+
+  let latePenalty = 0;
+  if (p5 >= 50) latePenalty = 30;
+  else if (p5 >= 30) latePenalty = 20;
+  else if (p5 >= 15) latePenalty = 8;
 
   return {
-    chain: pair.chainId,
-    tokenAddress: pair.baseToken?.address,
-    pairAddress: pair.pairAddress,
-
-    name: pair.baseToken?.name || "Unknown",
-    symbol: pair.baseToken?.symbol || "?",
-
-    url: pair.url,
-
-    priceUsd: num(pair.priceUsd),
-
-    priceChange5m: price5m,
-
-    volume5m,
-
-    liquidity,
-
-    buys,
-
-    sells,
-
-    momentum,
-
-    risk,
+    earlyScore: Math.round(clamp(early - latePenalty - risk * 0.10, 0, 100)),
+    risk: Math.min(100, risk),
+    riskFlags,
+    signals,
+    ageMinutes: age,
   };
 }
 
 export async function GET(request) {
   try {
-    const url = new URL(request.url);
-
     const chain =
-      url.searchParams.get("chain") || "solana";
+      (new URL(request.url).searchParams.get("chain") || "solana").toLowerCase();
 
-    const profiles =
-      await get("/token-profiles/latest/v1");
-
-    const tokens = [];
-
-    for (const token of profiles) {
-      if (
-        token.chainId === chain &&
-        token.tokenAddress
-      ) {
-        tokens.push(token.tokenAddress);
-      }
-
-      if (tokens.length >= 15) break;
+    if (!["solana", "base"].includes(chain)) {
+      return NextResponse.json({ error: "Unsupported chain" }, { status: 400 });
     }
 
-    const results = [];
+    const candidates = await discover(chain);
 
-    for (const tokenAddress of tokens) {
+    const rows = await Promise.all(candidates.map(async c => {
       try {
-        const pairs = await get(
-          `/token-pairs/v1/${chain}/${tokenAddress}`
-        );
+        const pair = await bestPair(chain, c.address);
+        if (!pair) return null;
 
-        if (!pairs?.length) continue;
+        const s = score(pair);
 
-        pairs.sort(
-          (a, b) =>
-            num(b?.liquidity?.usd) -
-            num(a?.liquidity?.usd)
-        );
+        return {
+          chain: pair?.chainId || chain,
+          tokenAddress: c.address,
+          pairAddress: pair?.pairAddress || "",
+          name: pair?.baseToken?.name || "Unknown",
+          symbol: pair?.baseToken?.symbol || "?",
+          url: pair?.url || "",
+          priceUsd: n(pair?.priceUsd),
+          priceChange5m: n(pair?.priceChange?.m5),
+          volume5m: n(pair?.volume?.m5),
+          liquidity: n(pair?.liquidity?.usd),
+          buys: n(pair?.txns?.m5?.buys),
+          sells: n(pair?.txns?.m5?.sells),
+          discoverySource: c.source,
+          ...s,
+        };
+      } catch {
+        return null;
+      }
+    }));
 
-        results.push(
-          scorePair(pairs[0])
-        );
-      } catch {}
-    }
-
-    results.sort(
-      (a, b) => b.momentum - a.momentum
-    );
+    const tokens = rows.filter(Boolean)
+      .sort((a,b) => b.earlyScore - a.earlyScore);
 
     return NextResponse.json({
-      tokens: results,
+      generatedAt: new Date().toISOString(),
+      chain,
+      birdeyeEnabled: Boolean(process.env.BIRDEYE_API_KEY),
+      tokens,
+    }, {
+      headers: { "Cache-Control": "no-store, max-age=0" },
     });
-  } catch (error) {
+  } catch (e) {
     return NextResponse.json(
-      {
-        error:
-          error.message || "Scanner failed",
-      },
+      { error: e?.message || "Fresh-launch scanner failed" },
       { status: 500 }
     );
   }
