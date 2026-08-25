@@ -55,7 +55,7 @@ function loadStorage(key, fallback) {
 
 export default function Home() {
   const [coins, setCoins] = useState([]);
-
+const [scanMode, setScanMode] = useState("early");
   const [chain, setChain] = useState("solana");
 
   const [status, setStatus] = useState("Starting scanner...");
@@ -91,7 +91,7 @@ export default function Home() {
 
     try {
       const response = await fetch(
-        `/api/scan?chain=${chain}`,
+        `/api/scan?chain=${chain}&mode=${scanMode}`
         {
           cache: "no-store",
         }
@@ -308,7 +308,7 @@ async function copyContract(address) {
 
   useEffect(() => {
     scan();
-  }, [chain]);
+  }, [chain, scanMode]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -415,7 +415,20 @@ async function copyContract(address) {
               Base
             </option>
           </select>
-
+<select
+  value={scanMode}
+  onChange={(e) => setScanMode(e.target.value)}
+  style={{
+    padding: "10px",
+    borderRadius: "10px",
+    background: "#111827",
+    color: "white",
+    border: "1px solid #334155",
+  }}
+>
+  <option value="early">⚡ Early Mode</option>
+  <option value="momentum">🔥 Momentum Mode</option>
+</select>
           <button
             onClick={scan}
             style={{
