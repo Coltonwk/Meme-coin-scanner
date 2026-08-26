@@ -2,612 +2,507 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const HISTORY_KEY = "meme_scanner_history_final_v1";
-const WATCHLIST_KEY = "meme_scanner_watchlist_final_v1";
-
-const money = v => {
-  const n = Number(v || 0);
+const money = value => {
+  const n = Number(value || 0);
   if (!n) return "—";
-  if (n < 0.01) return "$" + n.toPrecision(3);
-  return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  if (n < 0.01) {
+    return "$" + n.toPrecision(3);
+  }
+
+  return "$" + n.toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  });
 };
 
-const pct = v => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
+const percent = value => {
+  const n = Number(value);
+
+  if (!Number.isFinite(n)) {
+    return "—";
+  }
+
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 };
 
-const scoreColor = s => s >= 75 ? "#4ade80" : s >= 55 ? "#facc15" : "#94a3b8";
-const riskColor = s => s >= 60 ? "#f87171" : s >= 30 ? "#facc15" : "#4ade80";
+const scoreColor = score =>
+  score >= 75
+    ? "#4ade80"
+    : score >= 55
+    ? "#facc15"
+    : "#94a3b8";
 
-function loadLocal(key, fallback) {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fallback;
-  } catch {
-    return fallback;
+const statusLabel = status => {
+  if (status === "strong-early") {
+    return "🔥 Strong Early";
   }
-}
+
+  if (status === "active") {
+    return "⚡ Early Activity";
+  }
+
+  if (status === "forming") {
+    return "🟡 Pair Forming";
+  }
+
+  return "⏳ Waiting";
+};
 
 export default function Home() {
-  const [coins, setCoins] = useState([]);
-  const [chain, setChain] = useState("solana");
-  const [mode, setMode] = useState("fresh");
-  const [tab, setTab] = useState("scanner");
+  const [mode, setMode] =
+    useState("qualified");
 
-  const [status, setStatus] = useState("Starting scanner...");
-  const [loading, setLoading] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [launches, setLaunches] =
+    useState([]);
 
-  const [maxAge, setMaxAge] = useState(60);
-  const [minScore, setMinScore] = useState(0);
-  const [minLiquidity, setMinLiquidity] = useState(0);
+  const [loading, setLoading] =
+    useState(false);
 
-  const [watchlist, setWatchlist] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [status, setStatus] =
+    useState("Starting...");
 
-  const [social, setSocial] = useState({
-    loading: false,
-    updatedAt: null,
-    x: { enabled: false, posts: [], message: "Not loaded yet." },
-    instagram: { enabled: false, message: "" },
-    tiktok: { enabled: false, message: "" },
-  });
+  const [auto, setAuto] =
+    useState(true);
 
-  useEffect(() => {
-    setWatchlist(loadLocal(WATCHLIST_KEY, []));
-    setHistory(loadLocal(HISTORY_KEY, []));
-  }, []);
+  const [minScore, setMinScore] =
+    useState(0);
 
-  function saveHistory(tokens) {
-    const now = Date.now();
-    let h = loadLocal(HISTORY_KEY, []);
-
-    for (const c of tokens) {
-      if (c.score < 65 || !c.priceUsd) continue;
-
-      const recent = h.find(
-        x =>
-          x.chain === c.chain &&
-          x.tokenAddress === c.tokenAddress &&
-          now - x.createdAt < 30 * 60 * 1000
-      );
-
-      if (!recent) {
-        h.unshift({
-          id: `${c.chain}:${c.tokenAddress}:${now}`,
-          chain: c.chain,
-          tokenAddress: c.tokenAddress,
-          symbol: c.symbol,
-          name: c.name,
-          url: c.url,
-          score: c.score,
-          risk: c.risk,
-          mode,
-          alertPrice: c.priceUsd,
-          createdAt: now,
-          outcomes: {},
-        });
-      }
-    }
-
-    const targets = [5, 15, 30, 60];
-
-    h = h.map(item => {
-      const live = tokens.find(
-        c =>
-          c.chain === item.chain &&
-          c.tokenAddress === item.tokenAddress
-      );
-
-      if (!live?.priceUsd) return item;
-
-      const ageMin = (now - item.createdAt) / 60000;
-      const outcomes = { ...(item.outcomes || {}) };
-
-      for (const target of targets) {
-        if (ageMin >= target && outcomes[target] === undefined) {
-          outcomes[target] = ((live.priceUsd / item.alertPrice) - 1) * 100;
-        }
-      }
-
-      return { ...item, outcomes };
-    });
-
-    h = h.slice(0, 100);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
-    setHistory(h);
-  }
-
-  async function scan() {
+  async function load() {
     if (loading) return;
 
     setLoading(true);
-    setStatus(mode === "fresh" ? "Checking fresh listings..." : "Checking momentum...");
 
     try {
-      const r = await fetch(`/api/scan?chain=${chain}&mode=${mode}`, {
-        cache: "no-store",
-      });
+      const apiMode =
+        mode === "all"
+          ? "all"
+          : "qualified";
+
+      const r = await fetch(
+        `/api/scan?mode=${apiMode}`,
+        {
+          cache: "no-store",
+        }
+      );
+
       const data = await r.json();
 
-      if (!r.ok) throw new Error(data.error || "Scanner failed");
+      if (!r.ok) {
+        throw new Error(
+          data.error ||
+          "Scanner request failed"
+        );
+      }
 
-      const next = data.tokens || [];
-      setCoins(next);
-      saveHistory(next);
+      setLaunches(
+        data.launches || []
+      );
 
       setStatus(
-        `${data.birdeyeEnabled ? "Birdeye + DEX" : "DEX fallback"} • updated ${new Date().toLocaleTimeString()}`
+        `${data.provider || "RPC"} • ${new Date().toLocaleTimeString()}`
       );
-    } catch (e) {
-      setStatus("Error: " + e.message);
+    } catch (error) {
+      setStatus(
+        "Error: " + error.message
+      );
     } finally {
       setLoading(false);
     }
   }
 
-  async function refreshSocial() {
-    const top = coins.slice(0, 5);
+  useEffect(() => {
+    load();
+  }, [mode]);
 
-    if (!top.length) {
-      setSocial(s => ({
-        ...s,
-        x: { ...s.x, message: "Scan some coins first." },
-      }));
-      return;
-    }
+  useEffect(() => {
+    if (!auto) return;
 
-    setSocial(s => ({ ...s, loading: true }));
+    const id = setInterval(
+      load,
+      10000
+    );
 
+    return () =>
+      clearInterval(id);
+  }, [auto, mode, loading]);
+
+  const visible = useMemo(
+    () =>
+      launches.filter(
+        coin =>
+          Number(
+            coin.activityScore || 0
+          ) >= minScore
+      ),
+    [launches, minScore]
+  );
+
+  async function copyContract(mint) {
     try {
-      const symbols = top.map(c => c.symbol).join(",");
-      const addresses = top.map(c => c.tokenAddress).join(",");
-
-      const r = await fetch(
-        `/api/scan?action=social&symbols=${encodeURIComponent(symbols)}&addresses=${encodeURIComponent(addresses)}`,
-        { cache: "no-store" }
-      );
-
-      const data = await r.json();
-
-      if (!r.ok) throw new Error(data.error || "Social feed failed");
-
-      setSocial({
-        loading: false,
-        updatedAt: Date.now(),
-        x: data.x,
-        instagram: data.instagram,
-        tiktok: data.tiktok,
-      });
-    } catch (e) {
-      setSocial(s => ({
-        ...s,
-        loading: false,
-        x: { ...s.x, message: "Error: " + e.message },
-      }));
-    }
-  }
-
-  async function copyContract(address) {
-    try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(mint);
       setStatus("Contract copied ✓");
     } catch {
       setStatus("Could not copy contract");
     }
   }
 
-  function toggleWatch(c) {
-    const exists = watchlist.some(
-      x => x.chain === c.chain && x.tokenAddress === c.tokenAddress
-    );
-
-    const updated = exists
-      ? watchlist.filter(
-          x => !(x.chain === c.chain && x.tokenAddress === c.tokenAddress)
-        )
-      : [
-          ...watchlist,
-          {
-            chain: c.chain,
-            tokenAddress: c.tokenAddress,
-            symbol: c.symbol,
-            name: c.name,
-            url: c.url,
-          },
-        ];
-
-    setWatchlist(updated);
-    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(updated));
-  }
-
-  useEffect(() => {
-    scan();
-  }, [chain, mode]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const id = setInterval(scan, mode === "fresh" ? 15000 : 20000);
-    return () => clearInterval(id);
-  }, [autoRefresh, chain, mode, loading]);
-
-  useEffect(() => {
-    if (tab !== "social" || !autoRefresh) return;
-    refreshSocial();
-    const id = setInterval(refreshSocial, 60000);
-    return () => clearInterval(id);
-  }, [tab, autoRefresh, coins]);
-
-  const filtered = useMemo(
-    () =>
-      coins.filter(c => {
-        const ageOK =
-          mode !== "fresh" ||
-          c.ageMinutes == null ||
-          c.ageMinutes <= maxAge;
-
-        return (
-          ageOK &&
-          c.score >= minScore &&
-          c.liquidity >= minLiquidity
-        );
-      }),
-    [coins, mode, maxAge, minScore, minLiquidity]
-  );
+  const button = {
+    background: "#172033",
+    border: "1px solid #334155",
+    borderRadius: "9px",
+    color: "white",
+    padding: "10px 12px",
+  };
 
   const card = {
     background: "#111827",
     border: "1px solid #243244",
-    padding: "15px",
     borderRadius: "14px",
-  };
-
-  const button = {
-    padding: "10px 12px",
-    borderRadius: "9px",
-    border: "1px solid #334155",
-    background: "#172033",
-    color: "white",
+    padding: "15px",
   };
 
   return (
     <main
       style={{
         minHeight: "100vh",
-        background: "linear-gradient(180deg,#070a10,#0b1019)",
+        background:
+          "linear-gradient(180deg,#070a10,#0b1019)",
         color: "white",
-        fontFamily: "Arial,sans-serif",
         padding: "18px",
+        fontFamily:
+          "Arial,sans-serif",
       }}
     >
-      <div style={{ maxWidth: "900px", margin: "0 auto" }}>
-        <h1 style={{ marginBottom: "4px" }}>⚡ Meme Coin Intelligence</h1>
-        <p style={{ color: "#94a3b8", marginTop: 0 }}>
-          Fresh launches • momentum • social buzz
+      <div
+        style={{
+          maxWidth: "900px",
+          margin: "0 auto",
+        }}
+      >
+        <h1>
+          ⚡ Meme Coin Launch Scanner
+        </h1>
+
+        <p
+          style={{
+            color: "#94a3b8",
+          }}
+        >
+          Pump.fun launch activity •
+          market data • social links
         </p>
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "14px" }}>
-          <button style={button} onClick={() => setTab("scanner")}>
-            📊 Scanner
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            flexWrap: "wrap",
+            marginBottom: "14px",
+          }}
+        >
+          <select
+            value={mode}
+            onChange={e =>
+              setMode(e.target.value)
+            }
+            style={button}
+          >
+            <option value="qualified">
+              ⚡ Qualified Early
+            </option>
+
+            <option value="all">
+              🚨 All Detected
+            </option>
+          </select>
+
+          <select
+            value={minScore}
+            onChange={e =>
+              setMinScore(
+                Number(e.target.value)
+              )
+            }
+            style={button}
+          >
+            <option value="0">
+              Any score
+            </option>
+
+            <option value="40">
+              Score 40+
+            </option>
+
+            <option value="60">
+              Score 60+
+            </option>
+
+            <option value="75">
+              Score 75+
+            </option>
+          </select>
+
+          <button
+            onClick={load}
+            style={button}
+          >
+            {loading
+              ? "Refreshing..."
+              : "Refresh"}
           </button>
-          <button style={button} onClick={() => setTab("social")}>
-            📣 Social Buzz
-          </button>
-          <button style={button} onClick={() => setTab("history")}>
-            🕒 History
+
+          <button
+            onClick={() =>
+              setAuto(!auto)
+            }
+            style={button}
+          >
+            Auto {auto ? "ON" : "OFF"}
           </button>
         </div>
 
-        {tab === "scanner" && (
-          <>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              <select value={chain} onChange={e => setChain(e.target.value)} style={button}>
-                <option value="solana">Solana</option>
-                <option value="base">Base</option>
-              </select>
+        <p
+          style={{
+            color: "#94a3b8",
+          }}
+        >
+          {status}
+        </p>
 
-              <select value={mode} onChange={e => setMode(e.target.value)} style={button}>
-                <option value="fresh">⚡ Fresh Launch</option>
-                <option value="momentum">🔥 Momentum</option>
-              </select>
+        <div
+          style={{
+            display: "grid",
+            gap: "12px",
+          }}
+        >
+          {visible.map(coin => {
+            const fomo =
+              coin.fomoUrl ||
+              `https://fomo.family/coin?address=${coin.mint}&chainId=1399811149`;
 
-              <button onClick={scan} style={button}>
-                {loading ? "Scanning..." : "Scan Now"}
-              </button>
+            const socials =
+              coin.socials || {};
 
-              <button onClick={() => setAutoRefresh(!autoRefresh)} style={button}>
-                Auto {autoRefresh ? "ON" : "OFF"}
-              </button>
-            </div>
-
-            <p>{status}</p>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: mode === "fresh" ? "1fr 1fr 1fr" : "1fr 1fr",
-                gap: "8px",
-                marginBottom: "16px",
-              }}
-            >
-              {mode === "fresh" && (
-                <select value={maxAge} onChange={e => setMaxAge(Number(e.target.value))}>
-                  <option value="5">≤5 min old</option>
-                  <option value="10">≤10 min old</option>
-                  <option value="20">≤20 min old</option>
-                  <option value="60">≤1 hr old</option>
-                </select>
-              )}
-
-              <select value={minScore} onChange={e => setMinScore(Number(e.target.value))}>
-                <option value="0">Any score</option>
-                <option value="40">Score 40+</option>
-                <option value="55">Score 55+</option>
-                <option value="70">Score 70+</option>
-              </select>
-
-              <select
-                value={minLiquidity}
-                onChange={e => setMinLiquidity(Number(e.target.value))}
+            return (
+              <div
+                key={`${coin.mint}:${coin.detectedAt}`}
+                style={card}
               >
-                <option value="0">Any liquidity</option>
-                <option value="10000">$10k+</option>
-                <option value="25000">$25k+</option>
-                <option value="50000">$50k+</option>
-              </select>
-            </div>
-
-            <div style={{ display: "grid", gap: "12px" }}>
-              {filtered.map(c => {
-                const watching = watchlist.some(
-                  x => x.chain === c.chain && x.tokenAddress === c.tokenAddress
-                );
-
-                const fomo =
-                  c.chain === "solana"
-                    ? `https://fomo.family/coin?address=${c.tokenAddress}&chainId=1399811149`
-                    : c.url;
-
-                return (
-                  <div key={c.pairAddress || c.tokenAddress} style={card}>
-                    <div
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    gap: "10px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div>
+                    <h2
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: "10px",
+                        margin: 0,
                       }}
                     >
-                      <div>
-                        <h2 style={{ margin: 0 }}>{c.symbol}</h2>
-                        <div style={{ color: "#94a3b8" }}>{c.name}</div>
-                      </div>
-                      <button onClick={() => toggleWatch(c)} style={button}>
-                        {watching ? "★ Watching" : "☆ Watch"}
-                      </button>
+                      {coin.symbol &&
+                      coin.symbol !== "?"
+                        ? coin.symbol
+                        : "New launch"}
+                    </h2>
+
+                    <div
+                      style={{
+                        color:
+                          "#94a3b8",
+                      }}
+                    >
+                      {coin.name ||
+                        "Pump.fun token"}
                     </div>
-
-                    {c.ageMinutes != null && (
-                      <p>
-                        Age:{" "}
-                        <strong>
-                          {c.ageMinutes < 60
-                            ? `${c.ageMinutes.toFixed(1)} min`
-                            : `${(c.ageMinutes / 60).toFixed(1)} hr`}
-                        </strong>
-                      </p>
-                    )}
-
-                    <p>
-                      {mode === "fresh" ? "Early Score" : "Momentum"}:{" "}
-                      <strong style={{ color: scoreColor(c.score) }}>
-                        {c.score}/100
-                      </strong>
-                    </p>
-
-                    <p>
-                      Risk:{" "}
-                      <strong style={{ color: riskColor(c.risk) }}>
-                        {c.risk}/100
-                      </strong>
-                    </p>
-
-                    <p>5m Price: {pct(c.priceChange5m)}</p>
-                    <p>5m Volume: {money(c.volume5m)}</p>
-                    <p>Liquidity: {money(c.liquidity)}</p>
-                    <p>Buys / Sells: {c.buys} / {c.sells}</p>
-
-                    {!!c.signals?.length && (
-                      <p style={{ color: "#facc15" }}>
-                        ⚡ {c.signals.join(" • ")}
-                      </p>
-                    )}
-
-                    {!!c.riskFlags?.length && (
-                      <p style={{ color: "#f87171", fontSize: "13px" }}>
-                        Risk flags: {c.riskFlags.join(" • ")}
-                      </p>
-                    )}
-
-                    {!!c.socials?.length && (
-                      <p style={{ fontSize: "13px", color: "#94a3b8" }}>
-                        Social links:{" "}
-                        {c.socials.map((s, i) => (
-                          <span key={s.url}>
-                            {i ? " • " : ""}
-                            <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>
-                              {s.type || "social"}
-                            </a>
-                          </span>
-                        ))}
-                      </p>
-                    )}
-
-                    <p style={{ fontSize: "12px", color: "#64748b" }}>
-                      Found via {c.discoverySource}
-                    </p>
-
-                    <button
-                      onClick={() => copyContract(c.tokenAddress)}
-                      style={{ ...button, marginRight: "10px" }}
-                    >
-                      📋 Copy Contract
-                    </button>
-
-                    <a
-                      href={fomo}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ color: "#60a5fa" }}
-                    >
-                      Open in Fomo →
-                    </a>
                   </div>
-                );
-              })}
-            </div>
-          </>
-        )}
 
-        {tab === "social" && (
-          <>
-            <div style={card}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                }}
-              >
-                <div>
-                  <h2 style={{ marginTop: 0 }}>📣 Social Buzz</h2>
-                  <p style={{ color: "#94a3b8" }}>
-                    Searches recent X posts for the top coins from your current scan.
-                  </p>
+                  <strong
+                    style={{
+                      color:
+                        scoreColor(
+                          coin.activityScore ||
+                            0
+                        ),
+                    }}
+                  >
+                    {statusLabel(
+                      coin.status
+                    )}
+                  </strong>
                 </div>
 
-                <button onClick={refreshSocial} style={button}>
-                  {social.loading ? "Refreshing..." : "Refresh Social"}
-                </button>
-              </div>
+                <p>
+                  Early Activity Score:{" "}
+                  <strong
+                    style={{
+                      color:
+                        scoreColor(
+                          coin.activityScore ||
+                            0
+                        ),
+                    }}
+                  >
+                    {coin.activityScore ||
+                      0}
+                    /100
+                  </strong>
+                </p>
 
-              <p style={{ color: "#94a3b8", fontSize: "13px" }}>
-                {social.updatedAt
-                  ? `Updated ${new Date(social.updatedAt).toLocaleTimeString()}`
-                  : "Not updated yet"}
-              </p>
-            </div>
+                <p>
+                  Liquidity:{" "}
+                  {money(
+                    coin.liquidity
+                  )}
+                </p>
 
-            <div style={{ ...card, marginTop: "12px" }}>
-              <h3>𝕏 X / Twitter</h3>
+                <p>
+                  5m Volume:{" "}
+                  {money(
+                    coin.volume5m
+                  )}
+                </p>
 
-              {!social.x.enabled && (
-                <p style={{ color: "#facc15" }}>{social.x.message}</p>
-              )}
+                <p>
+                  Buys / Sells:{" "}
+                  {coin.buys5m || 0} /{" "}
+                  {coin.sells5m || 0}
+                </p>
 
-              {social.x.enabled && social.x.message && (
-                <p style={{ color: "#94a3b8" }}>{social.x.message}</p>
-              )}
+                <p>
+                  5m Price:{" "}
+                  {percent(
+                    coin.priceChange5m
+                  )}
+                </p>
 
-              <div style={{ display: "grid", gap: "10px" }}>
-                {(social.x.posts || []).map(p => (
+                <p
+                  style={{
+                    fontSize: "12px",
+                    color: "#64748b",
+                    overflowWrap:
+                      "anywhere",
+                  }}
+                >
+                  {coin.mint}
+                </p>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "9px",
+                    alignItems: "center",
+                  }}
+                >
+                  <button
+                    onClick={() =>
+                      copyContract(
+                        coin.mint
+                      )
+                    }
+                    style={button}
+                  >
+                    📋 Copy Contract
+                  </button>
+
                   <a
-                    key={p.id}
-                    href={p.url}
+                    href={fomo}
                     target="_blank"
                     rel="noreferrer"
                     style={{
-                      ...card,
-                      display: "block",
-                      textDecoration: "none",
-                      color: "white",
+                      ...button,
+                      textDecoration:
+                        "none",
                     }}
                   >
-                    <strong>
-                      {p.username ? `@${p.username}` : p.displayName || "X user"}
-                    </strong>
-
-                    {p.followers > 0 && (
-                      <span style={{ color: "#94a3b8", marginLeft: "8px", fontSize: "12px" }}>
-                        {p.followers.toLocaleString()} followers
-                      </span>
-                    )}
-
-                    <p>{p.excerpt}</p>
-
-                    <div style={{ color: "#94a3b8", fontSize: "12px" }}>
-                      ❤️ {p.likes} • 🔁 {p.reposts} • 💬 {p.replies}
-                      {p.createdAt ? ` • ${new Date(p.createdAt).toLocaleString()}` : ""}
-                    </div>
+                    🚀 Fomo
                   </a>
-                ))}
-              </div>
-            </div>
 
-            <div style={{ ...card, marginTop: "12px" }}>
-              <h3>Instagram</h3>
-              <p style={{ color: "#94a3b8" }}>
-                {social.instagram.message ||
-                  "Not connected. Broad live public-post search requires separate Meta-approved access."}
-              </p>
-            </div>
+                  {socials.twitter && (
+                    <a
+                      href={
+                        socials.twitter
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        ...button,
+                        textDecoration:
+                          "none",
+                      }}
+                    >
+                      𝕏 Twitter
+                    </a>
+                  )}
 
-            <div style={{ ...card, marginTop: "12px" }}>
-              <h3>TikTok</h3>
-              <p style={{ color: "#94a3b8" }}>
-                {social.tiktok.message ||
-                  "Not connected. Broad live public-content search requires separate approved TikTok API access."}
-              </p>
-            </div>
-          </>
-        )}
+                  {socials.telegram && (
+                    <a
+                      href={
+                        socials.telegram
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        ...button,
+                        textDecoration:
+                          "none",
+                      }}
+                    >
+                      ✈️ Telegram
+                    </a>
+                  )}
 
-        {tab === "history" && (
-          <div style={card}>
-            <h2>🕒 Signal History</h2>
-
-            {!history.length && (
-              <p style={{ color: "#94a3b8" }}>Signals scoring 65+ will appear here.</p>
-            )}
-
-            {history.slice(0, 30).map(h => (
-              <div
-                key={h.id}
-                style={{
-                  borderTop: "1px solid #243244",
-                  padding: "10px 0",
-                }}
-              >
-                <strong>{h.symbol}</strong>
-                <div style={{ color: "#94a3b8", fontSize: "12px" }}>
-                  {h.mode} • score {h.score} • risk {h.risk}
+                  {socials.website && (
+                    <a
+                      href={
+                        socials.website
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        ...button,
+                        textDecoration:
+                          "none",
+                      }}
+                    >
+                      🌐 Website
+                    </a>
+                  )}
                 </div>
-                <div style={{ marginTop: "4px", fontSize: "13px" }}>
-                  +5m {h.outcomes?.[5] === undefined ? "—" : pct(h.outcomes[5])}
-                  {" | "}
-                  +15m {h.outcomes?.[15] === undefined ? "—" : pct(h.outcomes[15])}
-                  {" | "}
-                  +30m {h.outcomes?.[30] === undefined ? "—" : pct(h.outcomes[30])}
-                  {" | "}
-                  +60m {h.outcomes?.[60] === undefined ? "—" : pct(h.outcomes[60])}
-                </div>
               </div>
-            ))}
-          </div>
-        )}
+            );
+          })}
+        </div>
+
+        {!visible.length &&
+          !loading && (
+            <p
+              style={{
+                color: "#94a3b8",
+                marginTop: "20px",
+              }}
+            >
+              No launches match the
+              current filter yet.
+            </p>
+          )}
 
         <p
           style={{
             marginTop: "25px",
             color: "#64748b",
             fontSize: "12px",
-            lineHeight: "1.5",
+            lineHeight: 1.5,
           }}
         >
-          Market and social signals show activity, not guaranteed future price movement.
-          New meme coins can be extremely volatile.
+          Activity scores and social
+          links are informational.
+          They do not indicate that a
+          token is safe or will rise.
         </p>
       </div>
     </main>
