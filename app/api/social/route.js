@@ -5,11 +5,49 @@ export const runtime = "nodejs";
 
 const TOKEN = process.env.X_BEARER_TOKEN || "";
 
+const g = globalThis;
+if (!g.__memeXCacheV9) g.__memeXCacheV9 = new Map();
+const CACHE = g.__memeXCacheV9;
+
+const COIN_CACHE_MS = 90 * 60 * 1000;
+const GENERAL_CACHE_MS = 4 * 60 * 60 * 1000;
+const MAX_CACHE_ITEMS = 80;
+
+function cacheGet(key) {
+  const item = CACHE.get(key);
+  if (!item) return null;
+  if (Date.now() >= item.expiresAt) {
+    CACHE.delete(key);
+    return null;
+  }
+  return item.value;
+}
+
+function cacheSet(key, value, ttl) {
+  if (CACHE.size >= MAX_CACHE_ITEMS) {
+    const first = CACHE.keys().next().value;
+    if (first) CACHE.delete(first);
+  }
+  CACHE.set(key, { value, expiresAt: Date.now() + ttl });
+}
+
 const clean = v =>
   String(v || "").replace(/[^\p{L}\p{N}_.$@#:\- ]/gu, "").trim();
 
 function unique(items) {
   return [...new Set(items.filter(Boolean))];
+}
+
+function rankCoins(coins) {
+  return [...coins]
+    .filter(c => c?.mint)
+    .sort((a, b) => {
+      const aX = a.twitterHandle ? 1 : 0;
+      const bX = b.twitterHandle ? 1 : 0;
+      if (bX !== aX) return bX - aX;
+      return Number(b.activityScore || 0) - Number(a.activityScore || 0);
+    })
+    .slice(0, 4);
 }
 
 function coinTerms(coin) {
@@ -19,50 +57,23 @@ function coinTerms(coin) {
   const mint = String(coin?.mint || "").trim();
   const handle = clean(coin?.twitterHandle || "").replace(/^@/, "");
 
-  if (symbol && symbol !== "?") {
-    out.push(`"$${symbol}"`);
-    out.push(`"${symbol}"`);
-  }
+  if (symbol && symbol !== "?") out.push(`"$${symbol}"`);
+  if (name.length >= 3 && name.toLowerCase() !== "new pump.fun launch") out.push(`"${name}"`);
+  if (mint.length >= 20) out.push(`"${mint}"`);
+  if (handle) out.push(`"@${handle}"`);
 
-  if (name.length >= 3 && name.toLowerCase() !== "new pump.fun launch") {
-    out.push(`"${name}"`);
-  }
-
-  if (mint.length >= 20) {
-    out.push(`"${mint}"`);
-  }
-
-  if (handle) {
-    out.push(`"@${handle}"`);
-  }
-
-  for (const hint of Array.isArray(coin?.phrases) ? coin.phrases : []) {
-    const h = clean(hint);
-    if (h.length >= 2) out.push(`"${h}"`);
-  }
-
-  return unique(out).slice(0, 8);
+  return unique(out).slice(0, 4);
 }
 
 function buildCoinQuery(coins) {
-  const terms = unique(
-    coins.slice(0, 8).flatMap(coinTerms)
-  ).slice(0, 20);
-
-  return terms.length
-    ? `(${terms.join(" OR ")}) -is:retweet`
-    : "";
+  const terms = unique(rankCoins(coins).flatMap(coinTerms)).slice(0, 12);
+  return terms.length ? `(${terms.join(" OR ")}) -is:retweet` : "";
 }
 
-const broaderQueries = [
-  `("pump.fun" OR pumpfun OR "solana memecoin" OR "solana meme coin") -is:retweet`,
-  `("new coin" OR "new token" OR "new launch") (solana OR pumpfun OR "pump.fun") -is:retweet`,
-  `("contract address" OR "CA:") (solana OR pumpfun) -is:retweet`,
-  `("community takeover" OR CTO OR "meme coin") (solana OR pumpfun) -is:retweet`,
-  `("ticker" OR "$") ("pump.fun" OR pumpfun) -is:retweet`
-];
+const GENERAL_QUERY =
+  `("pump.fun" OR pumpfun OR "solana memecoin" OR "new solana token" OR "CA:") -is:retweet`;
 
-async function xSearch(query, maxResults = 20) {
+async function xSearch(query) {
   if (!TOKEN) {
     return {
       enabled: false,
@@ -73,7 +84,8 @@ async function xSearch(query, maxResults = 20) {
 
   const params = new URLSearchParams({
     query,
-    max_results: String(Math.max(10, Math.min(50, maxResults))),
+    max_results: "10",
+    sort_order: "recency",
     "tweet.fields": "created_at,public_metrics,author_id",
     expansions: "author_id",
     "user.fields": "username,name,public_metrics,verified"
@@ -141,40 +153,23 @@ export async function POST(request) {
     const body = await request.json().catch(() => ({}));
 
     if (body?.mode === "general") {
-      const all = [];
+      const key = "general:v9";
+      const cached = cacheGet(key);
 
-      for (const query of broaderQueries) {
-        const r = await xSearch(query, 15);
-
-        if (!r.enabled || (r.message && !r.posts.length)) {
-          return NextResponse.json(r);
-        }
-
-        all.push(...r.posts);
+      if (cached) {
+        return NextResponse.json({ ...cached, cached: true });
       }
 
-      const seen = new Set();
+      const result = await xSearch(GENERAL_QUERY);
+      cacheSet(key, result, GENERAL_CACHE_MS);
 
-      const posts = all
-        .filter(p => {
-          if (seen.has(p.id)) return false;
-          seen.add(p.id);
-          return true;
-        })
-        .sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0))
-        .slice(0, 40);
-
-      return NextResponse.json({
-        enabled: true,
-        posts,
-        message: posts.length ? "" : "No recent broader posts found."
+      return NextResponse.json({ ...result, cached: false }, {
+        headers: { "Cache-Control": "public, s-maxage=14400, stale-while-revalidate=3600" }
       });
     }
 
-    const coins = Array.isArray(body?.coins)
-      ? body.coins.slice(0, 8)
-      : [];
-
+    const rawCoins = Array.isArray(body?.coins) ? body.coins : [];
+    const coins = rankCoins(rawCoins);
     const query = buildCoinQuery(coins);
 
     if (!query) {
@@ -182,11 +177,19 @@ export async function POST(request) {
         enabled: Boolean(TOKEN),
         posts: [],
         mentionedMints: [],
+        cached: false,
         message: "No search terms yet."
       });
     }
 
-    const result = await xSearch(query, 35);
+    const key = `coins:${query}`;
+    const cached = cacheGet(key);
+
+    if (cached) {
+      return NextResponse.json({ ...cached, cached: true });
+    }
+
+    const result = await xSearch(query);
     const mentioned = new Set();
 
     for (const post of result.posts) {
@@ -195,16 +198,16 @@ export async function POST(request) {
       }
     }
 
-    return NextResponse.json({
-      ...result,
-      mentionedMints: [...mentioned]
-    });
+    const value = { ...result, mentionedMints: [...mentioned] };
+    cacheSet(key, value, COIN_CACHE_MS);
 
+    return NextResponse.json({ ...value, cached: false });
   } catch (error) {
     return NextResponse.json({
       enabled: Boolean(TOKEN),
       posts: [],
       mentionedMints: [],
+      cached: false,
       message: error?.message || "Social search failed."
     }, { status: 500 });
   }
