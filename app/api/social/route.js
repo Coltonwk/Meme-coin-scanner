@@ -6,9 +6,12 @@ export const runtime = "nodejs";
 const TOKEN = process.env.X_BEARER_TOKEN || "";
 
 const g = globalThis;
-if (!g.__memeXCacheV11) g.__memeXCacheV11 = new Map();
 
-const CACHE = g.__memeXCacheV11;
+if (!g.__verifiedCryptoXCacheV12) {
+  g.__verifiedCryptoXCacheV12 = new Map();
+}
+
+const CACHE = g.__verifiedCryptoXCacheV12;
 
 const COIN_CACHE_MS = 90 * 60 * 1000;
 const GENERAL_CACHE_MS = 4 * 60 * 60 * 1000;
@@ -47,38 +50,66 @@ function unique(items) {
   return [...new Set(items.filter(Boolean))];
 }
 
+function cryptoProfile(user) {
+  const text = [
+    user?.description,
+    user?.name,
+    user?.username
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  const keywords = [
+    "crypto",
+    "trader",
+    "trading",
+    "solana",
+    "memecoin",
+    "meme coin",
+    "onchain",
+    "on-chain",
+    "defi",
+    "web3",
+    "investor",
+    "alpha"
+  ];
+
+  return keywords.some(k => text.includes(k));
+}
+
 function rankCoins(coins) {
   return [...coins]
     .filter(c => c?.mint)
-    .sort((a, b) => {
-      const ax = a.twitterHandle ? 1 : 0;
-      const bx = b.twitterHandle ? 1 : 0;
-
-      if (bx !== ax) return bx - ax;
-
-      return (
-        Number(b.earlyScore || 0) -
-        Number(a.earlyScore || 0)
-      );
-    })
+    .sort((a, b) =>
+      Number(b.highSignalScore || 0) -
+      Number(a.highSignalScore || 0)
+    )
     .slice(0, 4);
 }
 
 function termsFor(coin) {
   const out = [];
 
-  const symbol = clean(coin?.symbol || "")
-    .replace(/^\$/, "");
+  const symbol = clean(
+    coin?.symbol || ""
+  ).replace(/^\$/, "");
 
-  const name = clean(coin?.name || "");
+  const name = clean(
+    coin?.name || ""
+  );
 
-  const mint = String(coin?.mint || "").trim();
+  const mint =
+    String(coin?.mint || "").trim();
 
   const handle = clean(
     coin?.twitterHandle || ""
   ).replace(/^@/, "");
 
-  if (symbol && symbol !== "?") {
+  if (
+    symbol &&
+    symbol !== "?"
+  ) {
     out.push(`"$${symbol}"`);
   }
 
@@ -100,18 +131,20 @@ function termsFor(coin) {
   return unique(out).slice(0, 4);
 }
 
-function coinQuery(coins) {
+function verifiedCoinQuery(coins) {
   const terms = unique(
     rankCoins(coins).flatMap(termsFor)
   ).slice(0, 12);
 
-  return terms.length
-    ? `(${terms.join(" OR ")}) -is:retweet`
-    : "";
+  if (!terms.length) return "";
+
+  // Verified authors only. Replies and quotes are NOT removed so real
+  // conversations remain visible.
+  return `(${terms.join(" OR ")}) is:verified -is:retweet`;
 }
 
-const GENERAL_QUERY =
-  `("pump.fun" OR pumpfun OR "solana memecoin" OR "new solana token" OR "CA:") -is:retweet`;
+const VERIFIED_GENERAL_QUERY =
+  `("pump.fun" OR pumpfun OR "solana memecoin" OR "new solana token" OR "CA:") is:verified -is:retweet`;
 
 async function xSearch(query) {
   if (!TOKEN) {
@@ -127,10 +160,11 @@ async function xSearch(query) {
     max_results: "10",
     sort_order: "recency",
     "tweet.fields":
-      "created_at,public_metrics,author_id",
-    expansions: "author_id",
+      "created_at,public_metrics,author_id,conversation_id,referenced_tweets",
+    expansions:
+      "author_id",
     "user.fields":
-      "username,name,public_metrics,verified"
+      "username,name,description,public_metrics,verified,verified_type"
   });
 
   const r = await fetch(
@@ -160,14 +194,25 @@ async function xSearch(query) {
       .map(u => [u.id, u])
   );
 
-  return {
-    enabled: true,
-    posts: (j?.data || []).map(t => {
+  const posts = (j?.data || [])
+    .map(t => {
       const u =
         users.get(t.author_id) || {};
 
-      const m =
+      const metrics =
         t?.public_metrics || {};
+
+      const refs =
+        Array.isArray(t?.referenced_tweets)
+          ? t.referenced_tweets
+          : [];
+
+      const conversationType =
+        refs.some(x => x.type === "replied_to")
+          ? "reply"
+          : refs.some(x => x.type === "quoted")
+          ? "quote"
+          : "post";
 
       return {
         id: t.id,
@@ -175,28 +220,67 @@ async function xSearch(query) {
           String(t.text || "")
             .replace(/\s+/g, " ")
             .trim(),
+
         createdAt:
           t.created_at || null,
+
+        conversationId:
+          t.conversation_id || "",
+
+        conversationType,
+
         username:
           u.username || "",
+
         displayName:
           u.name || "",
+
+        description:
+          u.description || "",
+
+        verified:
+          Boolean(u.verified),
+
+        verifiedType:
+          u.verified_type || "",
+
         followers:
           Number(
             u?.public_metrics
               ?.followers_count || 0
           ),
+
         likes:
-          Number(m.like_count || 0),
+          Number(metrics.like_count || 0),
+
         reposts:
-          Number(m.retweet_count || 0),
+          Number(metrics.retweet_count || 0),
+
         replies:
-          Number(m.reply_count || 0),
+          Number(metrics.reply_count || 0),
+
         url:
-          `https://x.com/i/web/status/${t.id}`
+          `https://x.com/i/web/status/${t.id}`,
+
+        cryptoProfile:
+          cryptoProfile(u)
       };
-    }),
-    message: ""
+    })
+    // "Verified crypto trader" is a heuristic: verified author + a
+    // crypto/trading-related profile + some audience signal.
+    .filter(p =>
+      p.verified &&
+      p.cryptoProfile &&
+      p.followers >= 500
+    );
+
+  return {
+    enabled: true,
+    posts,
+    message:
+      posts.length
+        ? ""
+        : "No verified crypto-profile posts matched this search."
   };
 }
 
@@ -251,7 +335,8 @@ export async function POST(request) {
         .catch(() => ({}));
 
     if (body?.mode === "general") {
-      const key = "general:v11";
+      const key =
+        "verified-general:v12";
 
       const cached =
         cacheGet(key);
@@ -265,7 +350,7 @@ export async function POST(request) {
 
       const result =
         await xSearch(
-          GENERAL_QUERY
+          VERIFIED_GENERAL_QUERY
         );
 
       cacheSet(
@@ -280,27 +365,28 @@ export async function POST(request) {
       });
     }
 
-    const coins = rankCoins(
-      Array.isArray(body?.coins)
-        ? body.coins
-        : []
-    );
+    const coins =
+      rankCoins(
+        Array.isArray(body?.coins)
+          ? body.coins
+          : []
+      );
 
     const query =
-      coinQuery(coins);
+      verifiedCoinQuery(coins);
 
     if (!query) {
       return NextResponse.json({
-        enabled:
-          Boolean(TOKEN),
+        enabled: Boolean(TOKEN),
         posts: [],
         mentionedMints: [],
         message:
-          "No search terms yet."
+          "No verified-X search terms yet."
       });
     }
 
-    const key = `coins:${query}`;
+    const key =
+      `verified-coins:${query}`;
 
     const cached =
       cacheGet(key);
@@ -345,12 +431,13 @@ export async function POST(request) {
 
   } catch (error) {
     return NextResponse.json({
-      enabled: Boolean(TOKEN),
+      enabled:
+        Boolean(TOKEN),
       posts: [],
       mentionedMints: [],
       message:
         error?.message ||
-        "Social search failed."
+        "Verified X search failed."
     }, {
       status: 500
     });
