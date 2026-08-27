@@ -6,33 +6,42 @@ export const runtime = "nodejs";
 const TOKEN = process.env.X_BEARER_TOKEN || "";
 
 const g = globalThis;
-if (!g.__memeXCacheV9) g.__memeXCacheV9 = new Map();
-const CACHE = g.__memeXCacheV9;
+if (!g.__memeXCacheV11) g.__memeXCacheV11 = new Map();
+
+const CACHE = g.__memeXCacheV11;
 
 const COIN_CACHE_MS = 90 * 60 * 1000;
 const GENERAL_CACHE_MS = 4 * 60 * 60 * 1000;
-const MAX_CACHE_ITEMS = 80;
 
 function cacheGet(key) {
-  const item = CACHE.get(key);
-  if (!item) return null;
-  if (Date.now() >= item.expiresAt) {
+  const x = CACHE.get(key);
+
+  if (!x) return null;
+
+  if (Date.now() >= x.expiresAt) {
     CACHE.delete(key);
     return null;
   }
-  return item.value;
+
+  return x.value;
 }
 
 function cacheSet(key, value, ttl) {
-  if (CACHE.size >= MAX_CACHE_ITEMS) {
+  CACHE.set(key, {
+    value,
+    expiresAt: Date.now() + ttl
+  });
+
+  if (CACHE.size > 80) {
     const first = CACHE.keys().next().value;
     if (first) CACHE.delete(first);
   }
-  CACHE.set(key, { value, expiresAt: Date.now() + ttl });
 }
 
 const clean = v =>
-  String(v || "").replace(/[^\p{L}\p{N}_.$@#:\- ]/gu, "").trim();
+  String(v || "")
+    .replace(/[^\p{L}\p{N}_.$@#:\- ]/gu, "")
+    .trim();
 
 function unique(items) {
   return [...new Set(items.filter(Boolean))];
@@ -42,32 +51,63 @@ function rankCoins(coins) {
   return [...coins]
     .filter(c => c?.mint)
     .sort((a, b) => {
-      const aX = a.twitterHandle ? 1 : 0;
-      const bX = b.twitterHandle ? 1 : 0;
-      if (bX !== aX) return bX - aX;
-      return Number(b.activityScore || 0) - Number(a.activityScore || 0);
+      const ax = a.twitterHandle ? 1 : 0;
+      const bx = b.twitterHandle ? 1 : 0;
+
+      if (bx !== ax) return bx - ax;
+
+      return (
+        Number(b.earlyScore || 0) -
+        Number(a.earlyScore || 0)
+      );
     })
     .slice(0, 4);
 }
 
-function coinTerms(coin) {
+function termsFor(coin) {
   const out = [];
-  const symbol = clean(coin?.symbol || "").replace(/^\$/, "");
-  const name = clean(coin?.name || "");
-  const mint = String(coin?.mint || "").trim();
-  const handle = clean(coin?.twitterHandle || "").replace(/^@/, "");
 
-  if (symbol && symbol !== "?") out.push(`"$${symbol}"`);
-  if (name.length >= 3 && name.toLowerCase() !== "new pump.fun launch") out.push(`"${name}"`);
-  if (mint.length >= 20) out.push(`"${mint}"`);
-  if (handle) out.push(`"@${handle}"`);
+  const symbol = clean(coin?.symbol || "")
+    .replace(/^\$/, "");
+
+  const name = clean(coin?.name || "");
+
+  const mint = String(coin?.mint || "").trim();
+
+  const handle = clean(
+    coin?.twitterHandle || ""
+  ).replace(/^@/, "");
+
+  if (symbol && symbol !== "?") {
+    out.push(`"$${symbol}"`);
+  }
+
+  if (
+    name.length >= 3 &&
+    name.toLowerCase() !== "pump.fun token"
+  ) {
+    out.push(`"${name}"`);
+  }
+
+  if (mint.length >= 20) {
+    out.push(`"${mint}"`);
+  }
+
+  if (handle) {
+    out.push(`"@${handle}"`);
+  }
 
   return unique(out).slice(0, 4);
 }
 
-function buildCoinQuery(coins) {
-  const terms = unique(rankCoins(coins).flatMap(coinTerms)).slice(0, 12);
-  return terms.length ? `(${terms.join(" OR ")}) -is:retweet` : "";
+function coinQuery(coins) {
+  const terms = unique(
+    rankCoins(coins).flatMap(termsFor)
+  ).slice(0, 12);
+
+  return terms.length
+    ? `(${terms.join(" OR ")}) -is:retweet`
+    : "";
 }
 
 const GENERAL_QUERY =
@@ -86,16 +126,21 @@ async function xSearch(query) {
     query,
     max_results: "10",
     sort_order: "recency",
-    "tweet.fields": "created_at,public_metrics,author_id",
+    "tweet.fields":
+      "created_at,public_metrics,author_id",
     expansions: "author_id",
-    "user.fields": "username,name,public_metrics,verified"
+    "user.fields":
+      "username,name,public_metrics,verified"
   });
 
   const r = await fetch(
     `https://api.x.com/2/tweets/search/recent?${params.toString()}`,
     {
       cache: "no-store",
-      headers: { Authorization: `Bearer ${TOKEN}` }
+      headers: {
+        Authorization:
+          `Bearer ${TOKEN}`
+      }
     }
   );
 
@@ -103,30 +148,52 @@ async function xSearch(query) {
     return {
       enabled: true,
       posts: [],
-      message: `X API returned ${r.status}`
+      message:
+        `X API returned ${r.status}`
     };
   }
 
   const j = await r.json();
-  const users = new Map((j?.includes?.users || []).map(u => [u.id, u]));
+
+  const users = new Map(
+    (j?.includes?.users || [])
+      .map(u => [u.id, u])
+  );
 
   return {
     enabled: true,
     posts: (j?.data || []).map(t => {
-      const u = users.get(t.author_id) || {};
-      const m = t?.public_metrics || {};
+      const u =
+        users.get(t.author_id) || {};
+
+      const m =
+        t?.public_metrics || {};
 
       return {
         id: t.id,
-        text: String(t.text || "").replace(/\s+/g, " ").trim(),
-        createdAt: t.created_at || null,
-        username: u.username || "",
-        displayName: u.name || "",
-        followers: Number(u?.public_metrics?.followers_count || 0),
-        likes: Number(m.like_count || 0),
-        reposts: Number(m.retweet_count || 0),
-        replies: Number(m.reply_count || 0),
-        url: `https://x.com/i/web/status/${t.id}`
+        text:
+          String(t.text || "")
+            .replace(/\s+/g, " ")
+            .trim(),
+        createdAt:
+          t.created_at || null,
+        username:
+          u.username || "",
+        displayName:
+          u.name || "",
+        followers:
+          Number(
+            u?.public_metrics
+              ?.followers_count || 0
+          ),
+        likes:
+          Number(m.like_count || 0),
+        reposts:
+          Number(m.retweet_count || 0),
+        replies:
+          Number(m.reply_count || 0),
+        url:
+          `https://x.com/i/web/status/${t.id}`
       };
     }),
     message: ""
@@ -134,81 +201,158 @@ async function xSearch(query) {
 }
 
 function matches(post, coin) {
-  const text = String(post?.text || "").toLowerCase();
-  const symbol = String(coin?.symbol || "").replace(/[^A-Za-z0-9_]/g, "").toLowerCase();
-  const name = String(coin?.name || "").toLowerCase();
-  const mint = String(coin?.mint || "").toLowerCase();
-  const handle = String(coin?.twitterHandle || "").replace(/^@/, "").toLowerCase();
+  const text =
+    String(post?.text || "")
+      .toLowerCase();
+
+  const symbol =
+    String(coin?.symbol || "")
+      .replace(/[^A-Za-z0-9_]/g, "")
+      .toLowerCase();
+
+  const name =
+    String(coin?.name || "")
+      .toLowerCase();
+
+  const mint =
+    String(coin?.mint || "")
+      .toLowerCase();
+
+  const handle =
+    String(coin?.twitterHandle || "")
+      .replace(/^@/, "")
+      .toLowerCase();
 
   if (mint && text.includes(mint)) return true;
-  if (symbol && symbol !== "?" && text.includes(`$${symbol}`)) return true;
-  if (name.length >= 3 && text.includes(name)) return true;
-  if (handle && text.includes(`@${handle}`)) return true;
+
+  if (
+    symbol &&
+    symbol !== "?" &&
+    text.includes(`$${symbol}`)
+  ) return true;
+
+  if (
+    name.length >= 3 &&
+    text.includes(name)
+  ) return true;
+
+  if (
+    handle &&
+    text.includes(`@${handle}`)
+  ) return true;
 
   return false;
 }
 
 export async function POST(request) {
   try {
-    const body = await request.json().catch(() => ({}));
+    const body =
+      await request.json()
+        .catch(() => ({}));
 
     if (body?.mode === "general") {
-      const key = "general:v9";
-      const cached = cacheGet(key);
+      const key = "general:v11";
+
+      const cached =
+        cacheGet(key);
 
       if (cached) {
-        return NextResponse.json({ ...cached, cached: true });
+        return NextResponse.json({
+          ...cached,
+          cached: true
+        });
       }
 
-      const result = await xSearch(GENERAL_QUERY);
-      cacheSet(key, result, GENERAL_CACHE_MS);
+      const result =
+        await xSearch(
+          GENERAL_QUERY
+        );
 
-      return NextResponse.json({ ...result, cached: false }, {
-        headers: { "Cache-Control": "public, s-maxage=14400, stale-while-revalidate=3600" }
+      cacheSet(
+        key,
+        result,
+        GENERAL_CACHE_MS
+      );
+
+      return NextResponse.json({
+        ...result,
+        cached: false
       });
     }
 
-    const rawCoins = Array.isArray(body?.coins) ? body.coins : [];
-    const coins = rankCoins(rawCoins);
-    const query = buildCoinQuery(coins);
+    const coins = rankCoins(
+      Array.isArray(body?.coins)
+        ? body.coins
+        : []
+    );
+
+    const query =
+      coinQuery(coins);
 
     if (!query) {
       return NextResponse.json({
-        enabled: Boolean(TOKEN),
+        enabled:
+          Boolean(TOKEN),
         posts: [],
         mentionedMints: [],
-        cached: false,
-        message: "No search terms yet."
+        message:
+          "No search terms yet."
       });
     }
 
     const key = `coins:${query}`;
-    const cached = cacheGet(key);
+
+    const cached =
+      cacheGet(key);
 
     if (cached) {
-      return NextResponse.json({ ...cached, cached: true });
+      return NextResponse.json({
+        ...cached,
+        cached: true
+      });
     }
 
-    const result = await xSearch(query);
-    const mentioned = new Set();
+    const result =
+      await xSearch(query);
+
+    const mentioned =
+      new Set();
 
     for (const post of result.posts) {
       for (const coin of coins) {
-        if (matches(post, coin)) mentioned.add(coin.mint);
+        if (matches(post, coin)) {
+          mentioned.add(coin.mint);
+        }
       }
     }
 
-    const value = { ...result, mentionedMints: [...mentioned] };
-    cacheSet(key, value, COIN_CACHE_MS);
+    const value = {
+      ...result,
+      mentionedMints:
+        [...mentioned]
+    };
 
-    return NextResponse.json({ ...value, cached: false });
+    cacheSet(
+      key,
+      value,
+      COIN_CACHE_MS
+    );
+
+    return NextResponse.json({
+      ...value,
+      cached: false
+    });
+
   } catch (error) {
     return NextResponse.json({
       enabled: Boolean(TOKEN),
       posts: [],
       mentionedMints: [],
-      cached: false,
-      message: error?.message || "Social search failed."
-    }, { status: 500 });
+      message:
+        error?.message ||
+        "Social search failed."
+    }, {
+      status: 500
+    });
   }
 }
